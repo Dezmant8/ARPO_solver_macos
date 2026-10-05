@@ -1,0 +1,1 @@
+Keep the exact declarations from ArpoMethods.h. Every method must return -1 when me == 0 or out == 0, before dereferencing a pointer. All three floating point methods must assign positive zero when x == 0 before comparing its sign. Preserve the integer boundary handling. Include only ArpoMethods.h. Return one full replacement file in a fenced C block, without explanation.

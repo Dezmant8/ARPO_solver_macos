@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arpo-lab"
+version = "0.1.0"
+description = "Local coding agent and prompt experiments for C89 laboratory work"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+mlx = ["mlx-lm>=0.31,<0.33; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+reports = ["python-docx>=1.1,<2"]
+dev = ["ruff>=0.12,<1"]
+
+[project.scripts]
+arpo = "arpo_lab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

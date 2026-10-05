@@ -1,0 +1,9 @@
+# Экономный профиль для других ноутбуков. Все остальные настройки по умолчанию.
+[model]
+name = "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
+
+[agent]
+protocol = "blocks"
+
+[tools]
+sandbox = "required"

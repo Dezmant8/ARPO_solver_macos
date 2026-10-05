@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [[ ! -x .venv/bin/python ]]; then
+  printf '%s\n' 'Окружение не подготовлено: bash scripts/bootstrap.sh' >&2
+  exit 2
+fi
+exec .venv/bin/python -m arpo_lab "$@"

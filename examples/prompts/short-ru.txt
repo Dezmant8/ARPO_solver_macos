@@ -1,0 +1,1 @@
+Напиши на C89 вычисление абсолютного значения double как функцию double lab_abs(double x) в файле solution.c без main.

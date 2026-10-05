@@ -1,0 +1,16 @@
+.venv/
+.cache/
+models/
+runs/
+reports/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+.env
+.ruff_cache/
+build/
+dist/
+.eco/
+.tools/
+labs/

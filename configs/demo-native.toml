@@ -1,0 +1,14 @@
+# Проверка native инструментов на том же C89 примере.
+[agent]
+protocol = "native"
+max_requests = 6
+max_wall_s = 900
+max_total_tokens = 60000
+
+[tools]
+allow_run = false
+sandbox = "required"
+
+[validation]
+commands = [["python3", "examples/checks/check_abs.py"]]
+timeout_s = 60

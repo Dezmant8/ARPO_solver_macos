@@ -1,0 +1,4 @@
+Implement double lab_abs(double x) in solution.c in strict ANSI C89. Do not add main or other files.
+No includes, libc, math.h, fabs, abs, external libraries or macros. Use double comparisons and arithmetic, without union, integer type punning, bit masks or byte-order assumptions. C89 has no long long, ULL suffix or // comments.
+Handle positive and negative finite numbers, very small and very large values, and both zero signs. Both +0.0 and -0.0 must return +0.0. Do not change the interface. Independent tests and the console harness are provided externally.
+Algorithm clarification: FIRST return the literal 0.0 when x == 0.0; then check the sign of the remaining values. A single x >= 0.0 test preserves negative zero.

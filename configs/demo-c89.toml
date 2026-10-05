@@ -1,0 +1,27 @@
+# Команды проверки привязаны к корню репозитория, запускать arpo оттуда.
+[model]
+name = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
+
+[agent]
+protocol = "single-file"
+fallback_file = "solution.c"
+max_requests = 6
+max_wall_s = 900
+max_total_tokens = 60000
+
+[tools]
+# Агент пишет исходник, скрытый от его файловых инструментов валидатор собирает и проверяет.
+allow_run = false
+sandbox = "required"
+
+[validation]
+commands = [["python3", "examples/checks/check_abs.py"]]
+timeout_s = 60
+
+[experiment]
+repeats = 3
+order = "alternate"
+warmup = true
+
+[report]
+title = "Сравнение промптов для вычисления абсолютного значения"

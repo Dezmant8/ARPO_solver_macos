@@ -1,0 +1,57 @@
+# Опущенные параметры берутся из src/arpo_lab/config.py.
+[model]
+name = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
+base_url = "http://127.0.0.1:8080/v1"
+max_tokens = 4096
+temperature = 0.7
+top_p = 0.8
+seed = 42
+timeout_s = 300
+max_retries = 1
+require_usage = true
+allow_remote = false
+api_key_env = "ARPO_API_KEY"
+
+[agent]
+protocol = "native"
+fallback_file = ""
+max_requests = 30
+max_identical_replies = 3
+max_total_tokens = 120000
+max_wall_s = 1800
+max_actions_per_response = 12
+max_context_chars = 150000
+workspace_manifest = false
+context_files = []
+
+[tools]
+allow_run = true
+allowed_executables = ["clang", "cc", "make", "cmake", "ctest"]
+sandbox = "required"
+timeout_s = 30
+max_output_chars = 12000
+max_file_bytes = 200000
+max_workspace_bytes = 100000000
+max_list_entries = 300
+read_only_paths = []
+
+[validation]
+# Заполните своими независимыми тестами; без них результат unverified.
+commands = []
+timeout_s = 60
+feedback_chars = 12000
+
+[experiment]
+repeats = 3
+order = "alternate"
+warmup = true
+
+[pricing]
+input_per_million = 0.0
+output_per_million = 0.0
+currency = "USD"
+
+[report]
+title = "Сравнение промптов для лабораторной работы"
+author = ""
+group = ""

@@ -1,0 +1,1 @@
+Write a C89 function double lab_abs(double x) in solution.c that returns the absolute value of x. Do not add main.
