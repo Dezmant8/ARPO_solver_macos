@@ -6,8 +6,9 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from arpo_lab.agent import new_run, parse_reply, run_session
-from arpo_lab.config import load_config
+from arpo_lab.agent import compact_history, new_run, parse_reply, run_session
+from arpo_lab.config import increase_run_budgets, load_config
+from arpo_lab.lab import make_lab_reports
 from arpo_lab.protocol import native_reply, single_file_reply
 from arpo_lab.report import load_runs, summaries, write_report
 from arpo_lab.storage import read_json, tree_hash
@@ -78,6 +79,38 @@ class CoreTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 confined(self.path, value)
 
+    def test_explicit_context_extension_preserves_run_and_audits_change(self):
+        self.validator()
+        self.config["agent"]["max_context_chars"] = 1
+        run = new_run(self.config, "prompt", self.path / "runs")
+        data = run_session(run, client=FakeClient([]), progress=lambda _: None)
+        self.assertEqual(data["status"], "context_limit")
+        before_messages = deepcopy(data["messages"])
+        before_metrics = deepcopy(data["metrics"])
+        increase_run_budgets(data, context_chars=10000)
+        self.assertEqual(data["messages"], before_messages)
+        self.assertEqual(data["metrics"], before_metrics)
+        self.assertEqual(data["budget_extensions"][0]["changes"]["max_context_chars"],
+                         {"before": 1, "after": 10001})
+        from arpo_lab.storage import save_json
+        save_json(run / "run.json", data)
+        result = run_session(run, "continue", client=FakeClient([reply()]), progress=lambda _: None)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["user_followups"], 1)
+        self.assertEqual(len(result["sessions"]), 2)
+        self.assertEqual(result["metrics"]["total_tokens_known"], 15)
+
+    def test_budget_extension_rejects_invalid_or_active_changes_atomically(self):
+        run = new_run(self.config, "prompt", self.path / "runs")
+        data = read_json(run / "run.json")
+        before = deepcopy(data)
+        with self.assertRaises(ValueError):
+            increase_run_budgets(data, requests=2, context_chars=-1)
+        self.assertEqual(data, before)
+        data["status"] = "running"
+        with self.assertRaises(ValueError):
+            increase_run_budgets(data, context_chars=1000)
+
     def test_workspace_tools_and_limits(self):
         self.config["tools"]["max_file_bytes"] = 5
         tools = Workspace(self.path, self.config)
@@ -121,6 +154,34 @@ class CoreTests(unittest.TestCase):
         run = new_run(self.config, "prompt", self.path)
         data = run_session(run, client=FakeClient([reply()]), progress=lambda _: None)
         self.assertEqual(data["status"], "unverified")
+
+    def test_explicit_compaction_archives_full_history_without_resetting_cost(self):
+        self.validator()
+        run = new_run(self.config, "initial task", self.path / "runs")
+        data = run_session(run, client=FakeClient([reply("bad")] * 3), progress=lambda _: None)
+        messages = deepcopy(data["messages"])
+        metrics = deepcopy(data["metrics"])
+        compact_history(run, data)
+        archive = run / data["context_compactions"][0]["archive"]
+        self.assertEqual(read_json(archive)["messages"], messages)
+        self.assertEqual(data["messages"][:2], messages[:2])
+        self.assertEqual(data["metrics"], metrics)
+        from arpo_lab.storage import file_hash, save_json
+        self.assertEqual(file_hash(archive), data["context_compactions"][0]["archive_sha256"])
+        save_json(run / "run.json", data)
+        final = run_session(run, "rewrite correctly", client=FakeClient([reply()]), progress=lambda _: None)
+        self.assertEqual(final["status"], "passed")
+        self.assertEqual(final["metrics"]["total_tokens_known"], 60)
+        self.assertEqual(final["metrics"]["requests"], 4)
+        self.assertEqual(final["user_followups"], 1)
+
+    def test_compaction_rejects_active_run_without_creating_archive(self):
+        run = new_run(self.config, "task", self.path / "runs")
+        data = read_json(run / "run.json")
+        data["status"] = "running"
+        with self.assertRaises(ValueError):
+            compact_history(run, data)
+        self.assertFalse(list(run.glob("context-history-*.json")))
 
     def test_stalled_replies_and_resume_preserve_cost(self):
         self.validator()
@@ -184,6 +245,31 @@ class CoreTests(unittest.TestCase):
         (seed / "link").symlink_to(self.path)
         with self.assertRaises(ValueError):
             new_run(self.config, "a", self.path / "runs", seed=seed)
+
+    def test_lab_report_is_one_document_for_both_prompts(self):
+        paths = [
+            new_run(self.config, "short task", self.path / "runs", label="short"),
+            new_run(self.config, "detailed task", self.path / "runs", label="detailed"),
+        ]
+        for path in paths:
+            run_session(path, client=FakeClient([reply()]), progress=lambda _: None)
+        (self.path / "notes-comparison.toml").write_text('task = "One shared task"\n')
+        (self.path / "benchmarks-comparison.csv").write_text(
+            "variant,time_ms\nshort,1.5\ndetailed,1.0\n"
+        )
+        target = self.path / "reports"
+        make_lab_reports(self.path, load_runs(paths), target)
+        self.assertEqual(list(target.rglob("*.docx")), [target / "comparison.docx"])
+        data = read_json(target / "comparison.json")
+        self.assertEqual(set(data["summary"]), {"short", "detailed"})
+        self.assertEqual(len(data["runs"]), 2)
+        self.assertEqual(data["notes"]["task"], "One shared task")
+        self.assertEqual(data["benchmark_rows"][1:], [["short", "1.5"], ["detailed", "1.0"]])
+        from docx import Document
+
+        text = "\n".join(p.text for p in Document(target / "comparison.docx").paragraphs)
+        self.assertIn("Исходный промпт: short", text)
+        self.assertIn("Исходный промпт: detailed", text)
 
     def test_parse_schema(self):
         for content in ["[]", '{"done":"yes"}', '{"done":true,"actions":[1]}']:

@@ -255,6 +255,40 @@ def validate(path, data, remaining_s):
     return record
 
 
+def compact_history(path, data):
+    """Archive context explicitly; retain initial inputs, usage and all audit files."""
+    if data["status"] == "running":
+        raise ValueError("Cannot compact an active run")
+    messages = data["messages"]
+    if len(messages) < 2 or [m["role"] for m in messages[:2]] != ["system", "user"]:
+        raise ValueError("Initial system context and user prompt are required")
+    path = Path(path)
+    index = len(data.get("context_compactions", [])) + 1
+    archive = path / f"context-history-{index:02d}.json"
+    if archive.exists():
+        raise ValueError("Context archive already exists; never overwrite history")
+    save_json(archive, {"messages": messages, "at": utc_now()})
+    note = (
+        "This is a continuation of the same measured run, not a new attempt. "
+        f"The earlier conversation is archived in {archive.name}. "
+        "Failed assistant code is omitted from the active context explicitly to avoid repetition. "
+        f"All {data['metrics']['requests']} previous HTTP requests, tokens, times, "
+        "and user followups remain recorded. Keep the original fixed contract above. "
+        "Follow the new correction supplied next."
+    )
+    reduced = deepcopy(messages[:2]) + [{"role": "user", "content": note}]
+    event = {
+        "type": "context_compaction", "at": utc_now(), "archive": archive.name,
+        "archive_sha256": file_hash(archive),
+        "messages_before": len(messages), "messages_after": len(reduced),
+        "chars_before": len(json.dumps(messages, ensure_ascii=False)),
+        "chars_after": len(json.dumps(reduced, ensure_ascii=False)),
+    }
+    data["messages"] = reduced
+    data.setdefault("context_compactions", []).append(event)
+    append_jsonl(path / "events.jsonl", event)
+
+
 def run_session(path, followup=None, client=None, progress=print):
     path = Path(path).resolve()
     data = read_json(path / "run.json")

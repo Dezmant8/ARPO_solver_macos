@@ -8,6 +8,31 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .protocol import FILES_SYSTEM, NATIVE_SYSTEM, SINGLE_FILE_SYSTEM
+from .storage import utc_now
+
+
+def increase_run_budgets(data, *, requests=0, tokens=0, seconds=0, context_chars=0):
+    """Extend a stopped run explicitly, retaining its history and usage."""
+    if data["status"] == "running":
+        raise ValueError("Cannot change budgets while a run is running")
+    config = deepcopy(data["config"])
+    changes = {}
+    for value, key in [
+        (requests, "max_requests"),
+        (tokens, "max_total_tokens"),
+        (seconds, "max_wall_s"),
+        (context_chars, "max_context_chars"),
+    ]:
+        if value < 0:
+            raise ValueError("Budget increments must be nonnegative")
+        if value:
+            before = config["agent"][key]
+            config["agent"][key] += value
+            changes[key] = {"before": before, "after": config["agent"][key]}
+    load_config(overrides=config)
+    data["config"] = config
+    if changes:
+        data.setdefault("budget_extensions", []).append({"at": utc_now(), "changes": changes})
 
 SYSTEM = """You are a coding agent. Solve ONLY the user's task in the workspace.
 To write a file, use a fenced block with header ```file:relative/path.c

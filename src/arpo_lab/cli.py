@@ -8,9 +8,9 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
-from .agent import environment_info, new_run, run_session
+from .agent import compact_history, environment_info, new_run, run_session
 from .api import Client
-from .config import load_config
+from .config import increase_run_budgets, load_config
 from .eco import installed, setup_eco, smoke_test
 from .experiment import experiment
 from .lab import init_lab, make_lab_reports, resume_lab, run_lab
@@ -34,7 +34,7 @@ def parser():
     lab_init.add_argument("--topic", required=True)
     lab_init.add_argument("--name", default="Eco.Lab1")
     lab_init.add_argument("--example", choices=["abs"])
-    lab_run = sub.add_parser("lab-run", help="Запустить MLX, две серии и отдельные Word отчёты")
+    lab_run = sub.add_parser("lab-run", help="Запустить MLX, две серии и единый Word отчёт")
     lab_run.add_argument("directory", type=Path)
     lab_run.add_argument("--repeats", type=int)
     lab_run.add_argument("--no-server", action="store_true")
@@ -47,8 +47,12 @@ def parser():
     lab_resume.add_argument("--add-requests", type=int, default=0)
     lab_resume.add_argument("--add-tokens", type=int, default=0)
     lab_resume.add_argument("--add-seconds", type=float, default=0)
+    lab_resume.add_argument("--add-context-chars", type=int, default=0,
+                            help="Явно увеличить предел истории без её удаления")
+    lab_resume.add_argument("--compact-history", action="store_true",
+                            help="Архивировать предыдущие ответы без сброса метрик")
     lab_resume.add_argument("--no-server", action="store_true")
-    lab_report = sub.add_parser("lab-report", help="Пересобрать три отчёта после заполнения пояснений")
+    lab_report = sub.add_parser("lab-report", help="Пересобрать единый отчёт после заполнения пояснений")
     lab_report.add_argument("directory", type=Path)
     lab_report.add_argument("--experiment", type=Path)
     serve = sub.add_parser("serve", help="MLX сервер; держать открытым в отдельном терминале")
@@ -74,6 +78,8 @@ def parser():
     resume.add_argument("--add-requests", type=int, default=0, help="Явно увеличить общий бюджет запросов")
     resume.add_argument("--add-tokens", type=int, default=0)
     resume.add_argument("--add-seconds", type=float, default=0)
+    resume.add_argument("--add-context-chars", type=int, default=0)
+    resume.add_argument("--compact-history", action="store_true")
     recover = sub.add_parser("recover", help="Снять running после аварийного завершения процесса")
     recover.add_argument("run", type=Path)
     exp = sub.add_parser("experiment", help="Парные запуски с независимыми каталогами")
@@ -140,6 +146,8 @@ def main(argv=None):
                 add_requests=args.add_requests,
                 add_tokens=args.add_tokens,
                 add_seconds=args.add_seconds,
+                add_context_chars=args.add_context_chars,
+                compact=args.compact_history,
                 auto_server=not args.no_server,
             )
             return result_status(result)
@@ -151,7 +159,7 @@ def main(argv=None):
             path = args.experiment.resolve() if args.experiment else directory / manifest["experiments"][-1]
             target = directory / "reports" / path.name
             make_lab_reports(directory, load_runs([path]), target)
-            print("Отчёты: " + str(target))
+            print("Отчёт: " + str(target / "comparison.docx"))
             return 0
         if args.command == "doctor":
             info = environment_info()
@@ -248,20 +256,16 @@ def main(argv=None):
             data = read_json(path / "run.json")
             if args.config or args.model:
                 raise ValueError("resume uses the saved configuration; --config/--model cannot change it")
-            for option, key in [
-                (args.add_requests, "max_requests"),
-                (args.add_tokens, "max_total_tokens"),
-                (args.add_seconds, "max_wall_s"),
-            ]:
-                if option < 0:
-                    raise ValueError("Budget increments must be nonnegative")
-                data["config"]["agent"][key] += option
-            save_json(path / "run.json", data)
             followup = (
                 args.prompt if args.prompt is not None else args.prompt_file.read_text(encoding="utf-8")
             )
             if not followup.strip():
                 raise ValueError("Followup must not be empty")
+            increase_run_budgets(data, requests=args.add_requests, tokens=args.add_tokens,
+                                 seconds=args.add_seconds, context_chars=args.add_context_chars)
+            if args.compact_history:
+                compact_history(path, data)
+            save_json(path / "run.json", data)
             return result_status(run_session(path, followup))
         if args.command == "recover":
             path = args.run.resolve()

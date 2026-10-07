@@ -126,6 +126,12 @@ def md_table(rows):
 
 def comparison_warnings(runs):
     warnings = []
+    if any(r.get("context_compactions") for r in runs):
+        warnings.append(
+            "История одного или нескольких продолжений явно сокращена с сохранением полного "
+            "архива context-history-*.json. Прежние запросы, токены и время входят в итог; "
+            "сокращение контекста также влияет на стоимость продолжений."
+        )
     if any(not r["metrics"]["tokens_complete"] for r in runs):
         warnings.append(
             "Есть запросы без usage: токены и стоимость неполны и показаны как известная часть (*)."

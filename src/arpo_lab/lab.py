@@ -1,4 +1,4 @@
-"""Prepare a versioned ACOM experiment and produce separate and combined reports."""
+"""Prepare a versioned ACOM experiment and produce one comparison report."""
 
 import json
 import re
@@ -6,8 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .agent import run_session
-from .config import load_config
+from .agent import compact_history, run_session
+from .config import increase_run_budgets, load_config
 from .eco import generate_project, installed
 from .eco_build import build
 from .experiment import experiment
@@ -148,8 +148,7 @@ def init_lab(directory, topic, name="Eco.Lab1", repo=Path("."), example=None):
         "conclusion": "[Сравнить метрики, успешность и ограничения после эксперимента.]",
     }
     notes_text = "\n".join(f"{key} = {quoted(value)}" for key, value in notes.items()) + "\n"
-    for label in ["comparison", "short", "detailed"]:
-        (directory / f"notes-{label}.toml").write_text(notes_text, encoding="utf-8")
+    (directory / "notes-comparison.toml").write_text(notes_text, encoding="utf-8")
     save_json(
         directory / "lab.json",
         {
@@ -236,7 +235,7 @@ def run_lab(directory, repo=Path("."), config_path=None, model=None, repeats=Non
     runs = load_runs([path])
     target = directory / "reports" / path.name
     make_lab_reports(directory, runs, target)
-    print("Результаты: " + str(path) + "\nОтчёты: " + str(target))
+    print("Результаты: " + str(path) + "\nОтчёт: " + str(target / "comparison.docx"))
     return path, target, bool(runs) and all(run["status"] == "passed" for run in runs)
 
 
@@ -247,41 +246,30 @@ def make_lab_reports(directory, runs, target):
     write_report(
         runs, target, formats, directory / "notes-comparison.toml", csv_path if csv_path.is_file() else None
     )
-    for label in ["short", "detailed"]:
-        selected = [r for r in runs if r["label"] == label]
-        if selected:
-            csv_path = directory / f"benchmarks-{label}.csv"
-            write_report(
-                selected,
-                target / label,
-                formats,
-                directory / f"notes-{label}.toml",
-                csv_path if csv_path.is_file() else None,
-            )
 
 
-def resume_lab(directory, run, prompt, *, add_requests=0, add_tokens=0, add_seconds=0, auto_server=True):
+def resume_lab(
+    directory, run, prompt, *, add_requests=0, add_tokens=0, add_seconds=0,
+    add_context_chars=0, compact=False, auto_server=True
+):
     directory, run = Path(directory).resolve(), Path(run).resolve()
     if not run.is_relative_to(directory / "runs"):
         raise ValueError("Run must belong to this laboratory's runs directory")
-    if not prompt.strip() or min(add_requests, add_tokens, add_seconds) < 0:
+    if not prompt.strip():
         raise ValueError("Nonempty followup and nonnegative budget increments are required")
     data = read_json(run / "run.json")
     if data["status"] == "running":
         raise ValueError("Previous process is marked running; stop it and use recover first")
-    for value, key in [
-        (add_requests, "max_requests"),
-        (add_tokens, "max_total_tokens"),
-        (add_seconds, "max_wall_s"),
-    ]:
-        data["config"]["agent"][key] += value
-    load_config(overrides=data["config"])
+    increase_run_budgets(data, requests=add_requests, tokens=add_tokens,
+                         seconds=add_seconds, context_chars=add_context_chars)
     with local_server(data["config"], Path.cwd(), enabled=auto_server):
+        if compact:
+            compact_history(run, data)
         save_json(run / "run.json", data)
         result = run_session(run, prompt)
     target = directory / "reports" / run.parent.name
     make_lab_reports(directory, load_runs([run.parent]), target)
-    print("Отчёты обновлены: " + str(target))
+    print("Отчёт обновлён: " + str(target / "comparison.docx"))
     return result
 
 
