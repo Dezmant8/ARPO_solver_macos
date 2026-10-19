@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from .acom import prepare_scaffold, write_contract_check
 from .eco_build import build, discover_toolchain
 from .storage import file_hash, read_json, save_json, tree_hash, utc_now
 
@@ -189,6 +190,7 @@ def generate_project(parent, name, install):
     shutil.copytree(install["sdk"], project / ".sdk")
     shutil.copyfile(Path(__file__).with_name("eco_build.py"), project / ".arpo-build.py")
     save_json(project / ".arpo-toolchain.json", discover_toolchain())
+    prepare_scaffold(project, receipt["normalized_name"])
     # Fix vendor C11 defaults and stale library file references for optional Xcode use.
     for path in project.glob("AssemblyFiles/Mac/**/*.pbxproj"):
         text = path.read_text(encoding="utf-8-sig")
@@ -203,6 +205,7 @@ def generate_project(parent, name, install):
             "sdk_archive": install["framework_archive"],
             "sdk_sha256": install["sdk_sha256"],
             "name": name,
+            "acom_scaffold_version": 2,
             "receipt": receipt,
         },
     )
@@ -214,6 +217,11 @@ def smoke_test(install, repo=Path(".")):
     with tempfile.TemporaryDirectory(prefix="smoke-", dir=home) as folder:
         project = generate_project(folder, "Eco.ArpoSmoke", install)
         result = build(project, run=True, sdk_sha256=install["sdk_sha256"])
+        check = Path(folder) / "acom.c"
+        stem = read_json(project / "arpo-scaffold.json")["receipt"]["normalized_name"]
+        write_contract_check(project, stem, check)
+        build(project, client=check, run=True, sanitize=True,
+              output="BuildFiles/AcomContract", sdk_sha256=install["sdk_sha256"])
     save_json(
         home / "smoke.json",
         {
@@ -222,6 +230,8 @@ def smoke_test(install, repo=Path(".")):
             "status": "passed",
             "standard": "c89",
             "client_exit_code": result["client_exit_code"],
+            "acom_contract": "passed",
+            "acom_scaffold_version": 2,
         },
     )
     print("Eco smoke check passed: C89 build, real component factory, bus and memory allocator.")

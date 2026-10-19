@@ -1,0 +1,20 @@
+/* Private object state. Public interface declarations live in SharedFiles. */
+#ifndef ARPO_C_@STEM@_H
+#define ARPO_C_@STEM@_H
+
+#include "I@STEM@.h"
+#include "IEcoSystem1.h"
+#include "IdEcoMemoryManager1.h"
+
+typedef struct C@STEM@ {
+    I@STEM@VTbl* m_pVTblI@STEM@;
+    uint32_t m_cRef;
+    /* One owned reference per stored dependency. */
+    IEcoSystem1* m_pISys;
+    IEcoMemoryAllocator1* m_pIMem;
+} C@STEM@;
+
+int16_t ECOCALLMETHOD create@STEM@(IEcoUnknown* system, IEcoUnknown* outer,
+    const UGUID* iid, void** out);
+
+#endif

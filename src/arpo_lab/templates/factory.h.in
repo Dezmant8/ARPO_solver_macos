@@ -1,0 +1,12 @@
+/* Private state of the statically stored component factory. */
+#ifndef ARPO_C_@STEM@_FACTORY_H
+#define ARPO_C_@STEM@_FACTORY_H
+
+#include "IEcoSystem1.h"
+
+typedef struct C@STEM@Factory {
+    IEcoComponentFactoryVTbl* vtable;
+    uint32_t references;
+} C@STEM@Factory;
+
+#endif

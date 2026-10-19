@@ -1,0 +1,34 @@
+/* Scaffold demonstration only; does not claim to solve the selected task. */
+#include "Id@STEM@.h"
+#include "IEcoSystem1.h"
+#include "IdEcoInterfaceBus1.h"
+
+int16_t EcoMain(IEcoUnknown* system) {
+    IEcoSystem1* owner_system = 0;
+    IEcoInterfaceBus1* bus = 0;
+    I@STEM@* component = 0;
+    int16_t status;
+
+    if (!system) return ERR_ECO_POINTER;
+    status = system->pVTbl->QueryInterface(system, &GID_IEcoSystem, (void**)&owner_system);
+    if (status != 0 || !owner_system) {
+        status = ERR_ECO_NOSYSTEM;
+        goto cleanup;
+    }
+    status = owner_system->pVTbl->QueryInterface(owner_system, &IID_IEcoInterfaceBus1, (void**)&bus);
+    if (status != 0 || !bus) {
+        status = ERR_ECO_NOBUS;
+        goto cleanup;
+    }
+    status = bus->pVTbl->RegisterComponent(bus, &CID_@STEM@,
+        (IEcoUnknown*)GetIEcoComponentFactoryPtr_@GUID@);
+    if (status != 0) goto cleanup;
+    status = bus->pVTbl->QueryComponent(bus, &CID_@STEM@, 0, &IID_I@STEM@, (void**)&component);
+    if (status == 0 && !component) status = ERR_ECO_NOINTERFACE;
+
+cleanup:
+    if (component) component->pVTbl->Release(component);
+    if (bus) bus->pVTbl->Release(bus);
+    if (owner_system) owner_system->pVTbl->Release(owner_system);
+    return status;
+}

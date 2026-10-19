@@ -1,0 +1,124 @@
+/* Shared lifetime implementation; contains no laboratory algorithm. */
+#include "C@STEM@.h"
+#include "IEcoInterfaceBus1.h"
+#include "IEcoInterfaceBus1MemExt.h"
+
+static uint32_t ECOCALLMETHOD component_addref(I@STEM@* me) {
+    C@STEM@* object = (C@STEM@*)me;
+    if (!object) return 0;
+    return ++object->m_cRef;
+}
+
+static uint32_t ECOCALLMETHOD component_release(I@STEM@* me) {
+    C@STEM@* object = (C@STEM@*)me;
+    IEcoMemoryAllocator1* memory;
+    IEcoSystem1* system;
+    uint32_t references;
+
+    if (!object || !object->m_cRef) return 0;
+    references = --object->m_cRef;
+    if (references) return references;
+
+    memory = object->m_pIMem;
+    system = object->m_pISys;
+    memory->pVTbl->Free(memory, object);
+    memory->pVTbl->Release(memory);
+    system->pVTbl->Release(system);
+    return 0;
+}
+
+static int16_t ECOCALLMETHOD component_query(I@STEM@* me, const UGUID* iid, void** out) {
+    if (!out) return ERR_ECO_POINTER;
+    *out = 0;
+    if (!me || !iid) return ERR_ECO_POINTER;
+    if (!IsEqualUGUID(iid, &IID_I@STEM@) && !IsEqualUGUID(iid, &IID_IEcoUnknown)) {
+        return ERR_ECO_NOINTERFACE;
+    }
+    *out = me;
+    component_addref(me);
+    return ERR_ECO_SUCCESS;
+}
+
+static int16_t ECOCALLMETHOD component_MyFunction(I@STEM@Ptr_t me,
+        char_t* name, char_t** copy_name) {
+    (void)me;
+    (void)name;
+    if (copy_name) *copy_name = 0;
+    return -1; /* Unimplemented task, deliberately not a successful solution. */
+}
+
+static I@STEM@VTbl component_vtable = {
+    component_query,
+    component_addref,
+    component_release,
+    component_MyFunction
+};
+
+int16_t ECOCALLMETHOD create@STEM@(IEcoUnknown* system, IEcoUnknown* outer,
+        const UGUID* iid, void** out) {
+    IEcoSystem1* owner_system = 0;
+    IEcoInterfaceBus1* bus = 0;
+    IEcoInterfaceBus1MemExt* extension = 0;
+    IEcoMemoryAllocator1* memory = 0;
+    C@STEM@* object;
+    UGUID manager = CID_EcoMemoryManager1;
+    const UGUID* selected_manager;
+    int16_t status;
+
+    if (!out) return ERR_ECO_POINTER;
+    *out = 0;
+    if (!system || !iid) return ERR_ECO_POINTER;
+    if (outer) return ERR_ECO_NOAGGREGATION;
+
+    status = system->pVTbl->QueryInterface(system, &GID_IEcoSystem, (void**)&owner_system);
+    if (status != 0 || !owner_system) {
+        status = ERR_ECO_NOSYSTEM;
+        goto cleanup;
+    }
+    status = owner_system->pVTbl->QueryInterface(owner_system, &IID_IEcoInterfaceBus1, (void**)&bus);
+    if (status != 0 || !bus) {
+        status = ERR_ECO_NOBUS;
+        goto cleanup;
+    }
+    status = bus->pVTbl->QueryInterface(bus, &IID_IEcoInterfaceBus1MemExt, (void**)&extension);
+    if (status == 0 && extension) {
+        selected_manager = extension->pVTbl->get_Manager(extension);
+        if (!selected_manager) {
+            status = ERR_ECO_GET_MEMORY_ALLOCATOR;
+            goto cleanup;
+        }
+        manager = *selected_manager; /* Copy borrowed data before Release. */
+        extension->pVTbl->Release(extension);
+        extension = 0;
+    }
+    else if (status != ERR_ECO_NOINTERFACE) {
+        if (status == 0) status = ERR_ECO_GET_MEMORY_ALLOCATOR;
+        goto cleanup;
+    }
+    status = bus->pVTbl->QueryComponent(bus, &manager, 0, &IID_IEcoMemoryAllocator1, (void**)&memory);
+    if (status != 0 || !memory) {
+        status = ERR_ECO_GET_MEMORY_ALLOCATOR;
+        goto cleanup;
+    }
+    object = (C@STEM@*)memory->pVTbl->Alloc(memory, sizeof(C@STEM@));
+    if (!object) {
+        status = ERR_ECO_OUTOFMEMORY;
+        goto cleanup;
+    }
+    object->m_pVTblI@STEM@ = &component_vtable;
+    object->m_cRef = 1;
+    /* Transfer the acquired dependency references to the instance. */
+    object->m_pISys = owner_system;
+    object->m_pIMem = memory;
+    owner_system = 0;
+    memory = 0;
+    status = component_query((I@STEM@*)object, iid, out);
+    component_release((I@STEM@*)object);
+
+cleanup:
+    if (extension) extension->pVTbl->Release(extension);
+    if (bus) bus->pVTbl->Release(bus);
+    if (memory) memory->pVTbl->Release(memory);
+    if (owner_system) owner_system->pVTbl->Release(owner_system);
+    return status;
+}

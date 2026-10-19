@@ -25,6 +25,11 @@ while [[ $# -gt 0 ]]; do
     *) printf 'Неизвестный параметр: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
+if [[ "$ARPO_SKIP_MODEL" == 0 && -L "$ARPO_DESTINATION" && ! -e "$ARPO_DESTINATION" ]]; then
+  printf 'Каталог модели — ссылка на недоступный диск: %s\n' "$ARPO_DESTINATION" >&2
+  printf '%s\n' 'Подключите внешний SSD и повторите запуск; повторная загрузка не выполняется.' >&2
+  exit 2
+fi
 if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
   printf '%s\n' 'Автоматическая установка MLX рассчитана на Apple Silicon macOS (M1 и новее).' >&2
   exit 2

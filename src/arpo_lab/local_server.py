@@ -15,7 +15,12 @@ from .api import Client
 def check_model(config):
     data = Client(config).models()
     ids = {row.get("id") for row in data.get("data", [])}
-    if config["model"]["name"] not in ids:
+    name = config["model"]["name"]
+    expected = {name}
+    # MLX advertises resolved local paths, including targets of external-SSD symlinks.
+    if Path(name).is_dir():
+        expected.add(str(Path(name).resolve()))
+    if not ids.intersection(expected):
         raise ValueError(
             "Running API does not advertise the configured model; stop it or select its model ID"
         )
@@ -40,6 +45,9 @@ def local_server(config, repo, enabled=True, progress=print):
     if url.hostname not in {"127.0.0.1", "localhost", "::1"} or url.scheme != "http" or url.path != "/v1":
         raise ValueError("Automatic server requires a local http://host:port/v1 endpoint")
     model = Path(config["model"]["name"])
+    if model.is_symlink() and not model.exists():
+        raise ValueError("Model directory points to unavailable storage; connect the external SSD: "
+                         + str(model.readlink()))
     if not (model / "arpo-model.json").is_file():
         raise ValueError("Local model is not downloaded; run bash scripts/bootstrap.sh first")
     repo = Path(repo).resolve()
@@ -51,7 +59,7 @@ def local_server(config, repo, enabled=True, progress=print):
         "-m",
         "arpo_lab",
         "--model",
-        str(model.resolve()),
+        config["model"]["name"],
         "serve",
         "--port",
         str(url.port or 8080),

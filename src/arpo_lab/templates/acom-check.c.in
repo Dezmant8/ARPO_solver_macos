@@ -1,0 +1,345 @@
+/* Trusted ACOM contract client. Host libc is used only to track allocations. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "IEcoSystem1.h"
+#include "IEcoInterfaceBus1.h"
+#include "IEcoInterfaceBus1MemExt.h"
+#include "IdEcoInterfaceBus1.h"
+#include "IdEcoMemoryManager1.h"
+#include "Id@STEM@.h"
+#include "C@STEM@.h"
+
+typedef struct MockEnvironment {
+    IEcoUnknown unknown;
+    IEcoSystem1 system;
+    IEcoInterfaceBus1 bus;
+    IEcoInterfaceBus1MemExt extension;
+    IEcoMemoryAllocator1 memory;
+    uint32_t refs;
+    uint32_t memory_refs;
+    uint32_t live;
+    uint32_t system_queries;
+    uint32_t bus_queries;
+    uint32_t memory_queries;
+    uint32_t allocations;
+    uint32_t fail_system;
+    uint32_t fail_bus;
+    uint32_t fail_memory;
+    uint32_t fail_alloc;
+    uint32_t no_extension;
+    uint32_t invalidate_manager;
+    UGUID manager;
+} MockEnvironment;
+
+static MockEnvironment mock;
+static unsigned int cases;
+static unsigned int errors;
+
+static int check(int ok, const char* name) {
+    cases++;
+    if (!ok) { errors++; printf("FAIL,%s\n", name); }
+    return ok;
+}
+
+static int16_t query_environment(const UGUID* iid, void** out) {
+    if (!out) return ERR_ECO_POINTER;
+    *out = 0;
+    if (!iid) return ERR_ECO_POINTER;
+    if (IsEqualUGUID(iid, &IID_IEcoUnknown)) *out = &mock.unknown;
+    else if (IsEqualUGUID(iid, &GID_IEcoSystem)) {
+        mock.system_queries++;
+        if (mock.system_queries == mock.fail_system) return ERR_ECO_NOSYSTEM;
+        *out = &mock.system;
+    }
+    else if (IsEqualUGUID(iid, &IID_IEcoInterfaceBus1)) {
+        mock.bus_queries++;
+        if (mock.bus_queries == mock.fail_bus) return ERR_ECO_NOBUS;
+        *out = &mock.bus;
+    }
+    else if (IsEqualUGUID(iid, &IID_IEcoInterfaceBus1MemExt) && !mock.no_extension)
+        *out = &mock.extension;
+    else return ERR_ECO_NOINTERFACE;
+    mock.refs++;
+    return 0;
+}
+static int16_t ECOCALLMETHOD unknown_query(IEcoUnknown* me, const UGUID* iid, void** out) {
+    if (me != &mock.unknown) return ERR_ECO_POINTER;
+    return query_environment(iid, out);
+}
+static uint32_t ECOCALLMETHOD unknown_addref(IEcoUnknown* me) {
+    return me == &mock.unknown ? ++mock.refs : 0;
+}
+static uint32_t ECOCALLMETHOD unknown_release(IEcoUnknown* me) {
+    return me == &mock.unknown && mock.refs ? --mock.refs : 0;
+}
+static int16_t ECOCALLMETHOD system_query(IEcoSystem1* me, const UGUID* iid, void** out) {
+    if (me != &mock.system) return ERR_ECO_POINTER;
+    return query_environment(iid, out);
+}
+static uint32_t ECOCALLMETHOD system_addref(IEcoSystem1* me) {
+    return me == &mock.system ? ++mock.refs : 0;
+}
+static uint32_t ECOCALLMETHOD system_release(IEcoSystem1* me) {
+    return me == &mock.system && mock.refs ? --mock.refs : 0;
+}
+static void ECOCALLMETHOD system_set(IEcoSystem1* me, void* data) { (void)me; (void)data; }
+static void* ECOCALLMETHOD system_get(IEcoSystem1* me) { (void)me; return 0; }
+static int16_t ECOCALLMETHOD bus_query(IEcoInterfaceBus1* me, const UGUID* iid, void** out) {
+    if (me != &mock.bus) return ERR_ECO_POINTER;
+    return query_environment(iid, out);
+}
+static uint32_t ECOCALLMETHOD bus_addref(IEcoInterfaceBus1* me) {
+    return me == &mock.bus ? ++mock.refs : 0;
+}
+static uint32_t ECOCALLMETHOD bus_release(IEcoInterfaceBus1* me) {
+    return me == &mock.bus && mock.refs ? --mock.refs : 0;
+}
+static int16_t ECOCALLMETHOD bus_init(IEcoInterfaceBus1* me) { (void)me; return 0; }
+static int16_t ECOCALLMETHOD bus_init_with(IEcoInterfaceBus1* me, void* p, uint32_t n) {
+    (void)me; (void)p; (void)n; return 0;
+}
+static int16_t ECOCALLMETHOD bus_register(IEcoInterfaceBus1* me, const UGUID* cid, IEcoUnknown* f) {
+    (void)me; (void)cid; (void)f; return 0;
+}
+static int16_t ECOCALLMETHOD bus_unregister(IEcoInterfaceBus1* me, const UGUID* cid) {
+    (void)me; (void)cid; return 0;
+}
+static int16_t ECOCALLMETHOD extension_query(IEcoInterfaceBus1MemExt* me, const UGUID* iid, void** out) {
+    if (me != &mock.extension) return ERR_ECO_POINTER;
+    return query_environment(iid, out);
+}
+static uint32_t ECOCALLMETHOD extension_addref(IEcoInterfaceBus1MemExt* me) {
+    return me == &mock.extension ? ++mock.refs : 0;
+}
+static uint32_t ECOCALLMETHOD extension_release(IEcoInterfaceBus1MemExt* me) {
+    if (me == &mock.extension && mock.invalidate_manager)
+        ((unsigned char*)&mock.manager)[sizeof(mock.manager)-1] ^= 1;
+    return me == &mock.extension && mock.refs ? --mock.refs : 0;
+}
+static int16_t ECOCALLMETHOD extension_set(IEcoInterfaceBus1MemExt* me, const UGUID* cid) {
+    (void)me; (void)cid; return 0;
+}
+static const UGUID* ECOCALLMETHOD extension_get(IEcoInterfaceBus1MemExt* me) {
+    (void)me; return &mock.manager;
+}
+static int16_t ECOCALLMETHOD extension_expand(IEcoInterfaceBus1MemExt* me, bool_t value) {
+    (void)me; (void)value; return 0;
+}
+static int16_t ECOCALLMETHOD memory_query(IEcoMemoryAllocator1* me, const UGUID* iid, void** out) {
+    if (!out) return ERR_ECO_POINTER;
+    *out = 0;
+    if (me != &mock.memory || !iid) return ERR_ECO_POINTER;
+    if (!IsEqualUGUID(iid, &IID_IEcoMemoryAllocator1) && !IsEqualUGUID(iid, &IID_IEcoUnknown))
+        return ERR_ECO_NOINTERFACE;
+    *out = me; mock.memory_refs++; return 0;
+}
+static uint32_t ECOCALLMETHOD memory_addref(IEcoMemoryAllocator1* me) {
+    return me == &mock.memory ? ++mock.memory_refs : 0;
+}
+static uint32_t ECOCALLMETHOD memory_release(IEcoMemoryAllocator1* me) {
+    return me == &mock.memory && mock.memory_refs ? --mock.memory_refs : 0;
+}
+static void* ECOCALLMETHOD memory_alloc(IEcoMemoryAllocator1* me, uint32_t n) {
+    void* p;
+    if (me != &mock.memory) return 0;
+    mock.allocations++;
+    if (mock.allocations == mock.fail_alloc) return 0;
+    p = malloc(n); if (p) mock.live++; return p;
+}
+static void ECOCALLMETHOD memory_free(IEcoMemoryAllocator1* me, void* p) {
+    if (me == &mock.memory && p) { mock.live--; free(p); }
+}
+static void* ECOCALLMETHOD memory_realloc(IEcoMemoryAllocator1* me, void* p, uint32_t n) {
+    (void)me; return realloc(p, n);
+}
+static void* ECOCALLMETHOD memory_copy(IEcoMemoryAllocator1* me, void* dst, void* src, uint32_t n) {
+    (void)me; return memcpy(dst, src, n);
+}
+static void* ECOCALLMETHOD memory_fill(IEcoMemoryAllocator1* me, void* dst, char_t v, uint32_t n) {
+    (void)me; return memset(dst, v, n);
+}
+static int16_t ECOCALLMETHOD memory_compare(IEcoMemoryAllocator1* me, void* a, void* b, uint32_t n) {
+    int result;
+    (void)me; result = memcmp(a, b, n); return (int16_t)((result > 0) - (result < 0));
+}
+static uint32_t ECOCALLMETHOD memory_size(IEcoMemoryAllocator1* me, void* p) {
+    (void)me; (void)p; return 0;
+}
+static int16_t ECOCALLMETHOD bus_component(IEcoInterfaceBus1* me, const UGUID* cid,
+        IEcoUnknown* outer, const UGUID* iid, void** out) {
+    (void)outer;
+    if (!out) return ERR_ECO_POINTER;
+    *out = 0;
+    if (me != &mock.bus || !iid) return ERR_ECO_POINTER;
+    if (!cid || !IsEqualUGUID(cid, &CID_EcoMemoryManager1)) return ERR_ECO_GET_MEMORY_ALLOCATOR;
+    mock.memory_queries++;
+    if (mock.memory_queries == mock.fail_memory) return ERR_ECO_GET_MEMORY_ALLOCATOR;
+    return memory_query(&mock.memory, iid, out);
+}
+static IEcoUnknownVTbl unknown_vtable = {unknown_query, unknown_addref, unknown_release};
+static IEcoSystem1VTbl system_vtable = {
+    system_query, system_addref, system_release, system_set, system_get
+};
+static IEcoInterfaceBus1VTbl bus_vtable = {
+    bus_query, bus_addref, bus_release, bus_init, bus_init_with,
+    bus_register, bus_unregister, bus_component
+};
+static IEcoMemoryAllocator1VTbl memory_vtable = {
+    memory_query, memory_addref, memory_release, memory_alloc, memory_free,
+    memory_realloc, memory_copy, memory_fill, memory_compare, memory_size
+};
+static IEcoInterfaceBus1MemExtVTbl extension_vtable = {
+    extension_query, extension_addref, extension_release, extension_set, extension_get, extension_expand
+};
+
+static void reset_mock(void) {
+    memset(&mock, 0, sizeof(mock));
+    mock.unknown.pVTbl = &unknown_vtable;
+    mock.system.pVTbl = &system_vtable;
+    mock.bus.pVTbl = &bus_vtable;
+    mock.extension.pVTbl = &extension_vtable;
+    mock.memory.pVTbl = &memory_vtable;
+    mock.refs = 1; mock.memory_refs = 1;
+    mock.manager = CID_EcoMemoryManager1;
+}
+static void release_interface(void* p) {
+    IEcoUnknown* u = (IEcoUnknown*)p;
+    if (u) u->pVTbl->Release(u);
+}
+static void check_balanced(void) {
+    check(mock.refs == 1, "system_and_bus_references_balanced");
+    check(mock.memory_refs == 1, "allocator_references_balanced");
+    check(mock.live == 0, "all_component_allocations_freed");
+}
+
+static void test_interface_matrix(I@STEM@* component) {
+    const UGUID* interfaces[2];
+    IEcoUnknown* canonical = 0;
+    IEcoUnknown* source = 0;
+    IEcoUnknown* target = 0;
+    IEcoUnknown* identity = 0;
+    UGUID missing = IID_I@STEM@;
+    unsigned int first, second, repeat;
+    void* output;
+    int16_t status;
+
+    interfaces[0] = &IID_I@STEM@;
+    interfaces[1] = &IID_IEcoUnknown;
+    ((unsigned char*)&missing)[sizeof(missing) - 1] ^= 1;
+    status = component->pVTbl->QueryInterface(component, &IID_IEcoUnknown, (void**)&canonical);
+    if (!check(status == 0 && canonical != 0, "canonical_unknown")) return;
+
+    for (first = 0; first < 2; first++) {
+        status = component->pVTbl->QueryInterface(component, interfaces[first], (void**)&source);
+        if (!check(status == 0 && source != 0, "supported_interface")) continue;
+        for (second = 0; second < 2; second++) {
+            for (repeat = 0; repeat < 2; repeat++) {
+                status = source->pVTbl->QueryInterface(source, interfaces[second], (void**)&target);
+                if (!check(status == 0 && target != 0, "repeated_cross_interface_query")) continue;
+                status = target->pVTbl->QueryInterface(target, &IID_IEcoUnknown, (void**)&identity);
+                check(status == 0 && identity == canonical, "same_unknown_identity");
+                release_interface(identity);
+                release_interface(target);
+            }
+        }
+        output = source;
+        status = source->pVTbl->QueryInterface(source, &missing, &output);
+        check(status != 0 && output == 0, "unsupported_interface_clears_output");
+        output = source;
+        status = source->pVTbl->QueryInterface(source, 0, &output);
+        check(status != 0 && output == 0, "null_iid_clears_output");
+        check(source->pVTbl->QueryInterface(source, interfaces[first], 0) != 0,
+            "null_output_is_rejected");
+        release_interface(source);
+    }
+    release_interface(canonical);
+}
+
+static void test_case(const char* name, IEcoComponentFactory* factory) {
+    I@STEM@* component = 0;
+    IEcoUnknown* identity = 0;
+    C@STEM@* object;
+    void* output;
+    int16_t status;
+
+    reset_mock();
+    printf("ACOM_CASE,%s\n", name);
+    if (strcmp(name, "factory_arguments") == 0) {
+        check(factory->pVTbl->QueryInterface(factory, &IID_IEcoComponentFactory, 0) != 0,
+            "factory_null_output");
+        output = factory;
+        status = factory->pVTbl->QueryInterface(factory, 0, &output);
+        check(status != 0 && !output, "factory_null_iid");
+        output = factory;
+        status = factory->pVTbl->QueryInterface(0, &IID_IEcoComponentFactory, &output);
+        check(status != 0 && !output, "factory_null_me");
+        output = factory;
+        status = factory->pVTbl->Alloc(factory, 0, 0, &IID_I@STEM@, &output);
+        check(status != 0 && !output, "allocation_null_system");
+        output = factory;
+        status = factory->pVTbl->Alloc(factory, &mock.unknown, 0, 0, &output);
+        check(status != 0 && !output, "allocation_null_iid");
+    }
+    else if (strcmp(name, "aggregation") == 0) {
+        output = factory;
+        status = factory->pVTbl->Alloc(factory, &mock.unknown, &mock.unknown,
+            &IID_IEcoUnknown, &output);
+        check(status == ERR_ECO_NOAGGREGATION && !output, "unsupported_aggregation_rejected");
+        if (status == 0) release_interface(output);
+    }
+    else {
+        if (strcmp(name, "system_failure") == 0) mock.fail_system = 1;
+        if (strcmp(name, "bus_failure") == 0) mock.fail_bus = 1;
+        if (strcmp(name, "allocator_failure") == 0) mock.fail_memory = 1;
+        if (strcmp(name, "allocation_failure") == 0) mock.fail_alloc = 1;
+        if (strcmp(name, "optional_extension") == 0) mock.no_extension = 1;
+        if (strcmp(name, "borrowed_identifier") == 0) mock.invalidate_manager = 1;
+
+        output = factory;
+        status = factory->pVTbl->Alloc(factory, &mock.unknown, 0, &IID_I@STEM@, &output);
+        if (mock.fail_system || mock.fail_bus || mock.fail_memory || mock.fail_alloc) {
+            check(status != 0 && !output, "failed_creation_is_not_published");
+        }
+        else if (check(status == 0 && output != 0, "object_created")) {
+            component = (I@STEM@*)output;
+            object = (C@STEM@*)component;
+            check(object->m_pISys == &mock.system, "query_system_instead_of_cast");
+            check(mock.refs == 2 && mock.memory_refs == 2, "one_owned_reference_per_dependency");
+            check(mock.system_queries == 1 && mock.bus_queries == 1,
+                "no_duplicate_initialization");
+            test_interface_matrix(component);
+
+            /* The unknown view must keep the instance alive after releasing the task view. */
+            status = component->pVTbl->QueryInterface(component, &IID_IEcoUnknown, (void**)&identity);
+            if (check(status == 0 && identity != 0, "acquire_lifetime_reference")) {
+                component->pVTbl->Release(component);
+                component = 0;
+                check(mock.live == 1, "instance_alive_through_unknown");
+                output = 0;
+                status = identity->pVTbl->QueryInterface(identity, &IID_I@STEM@, &output);
+                check(status == 0 && output != 0, "return_from_unknown_after_primary_release");
+                release_interface(output);
+                release_interface(identity);
+            }
+            release_interface(component);
+        }
+    }
+    check_balanced();
+}
+
+int16_t EcoMain(IEcoUnknown* unused_system) {
+    const char* scenarios[] = {
+        "normal", "factory_arguments", "aggregation", "system_failure", "bus_failure",
+        "allocator_failure", "allocation_failure", "optional_extension", "borrowed_identifier"
+    };
+    IEcoComponentFactory* factory = GetIEcoComponentFactoryPtr_@GUID@;
+    unsigned int index;
+    (void)unused_system;
+
+    for (index = 0; index < sizeof(scenarios) / sizeof(scenarios[0]); index++) {
+        test_case(scenarios[index], factory);
+    }
+    printf("ACOM_CONTRACT checks=%u failures=%u\n", cases, errors);
+    return errors ? 1 : 0;
+}

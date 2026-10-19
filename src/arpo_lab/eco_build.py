@@ -75,10 +75,14 @@ def build(
     started = time.perf_counter()
     # SDK headers use compiler extensions: system includes isolate vendor warnings.
     # Student sources themselves are checked with strict ANSI C89.
+    vendor_roots = {framework, (project / ".sdk").resolve()}
     includes = []
     for path in sorted(project.rglob("*")):
         if path.is_dir() and path.name in {"SharedFiles", "HeaderFiles", "DependenciesFiles"}:
-            if not path.is_relative_to(framework) and not path.is_relative_to(destination):
+            if (
+                not any(path.is_relative_to(root) for root in vendor_roots)
+                and not path.is_relative_to(destination)
+            ):
                 includes += ["-I", str(path)]
     for path in sorted(framework.glob("*/SharedFiles")):
         includes += ["-isystem", str(path)]
@@ -103,7 +107,7 @@ def build(
         for p in sorted(project.rglob("*.c"))
         if "SourceFiles" in p.parts
         and "UnitTestFiles" not in p.parts
-        and not p.is_relative_to(framework)
+        and not any(p.is_relative_to(root) for root in vendor_roots)
         and not p.is_relative_to(destination)
     ]
     if not sources:

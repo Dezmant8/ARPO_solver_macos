@@ -1,0 +1,66 @@
+/* Static factory; no per-instance template or hidden second initialization. */
+#include "C@STEM@.h"
+#include "C@STEM@Factory.h"
+
+static uint32_t ECOCALLMETHOD factory_addref(IEcoComponentFactory* me) {
+    C@STEM@Factory* factory = (C@STEM@Factory*)me;
+    if (!factory) return 0;
+    return ++factory->references;
+}
+
+static uint32_t ECOCALLMETHOD factory_release(IEcoComponentFactory* me) {
+    C@STEM@Factory* factory = (C@STEM@Factory*)me;
+    if (!factory || !factory->references) return 0;
+    return --factory->references; /* Factory storage is static. */
+}
+
+static int16_t ECOCALLMETHOD factory_query(IEcoComponentFactory* me, const UGUID* iid, void** out) {
+    if (!out) return ERR_ECO_POINTER;
+    *out = 0;
+    if (!me || !iid) return ERR_ECO_POINTER;
+    if (!IsEqualUGUID(iid, &IID_IEcoUnknown) && !IsEqualUGUID(iid, &IID_IEcoComponentFactory)) {
+        return ERR_ECO_NOINTERFACE;
+    }
+    *out = me;
+    factory_addref(me);
+    return 0;
+}
+
+static int16_t ECOCALLMETHOD factory_alloc(IEcoComponentFactory* me, IEcoUnknown* system,
+        IEcoUnknown* outer, const UGUID* iid, void** out) {
+    if (!out) return ERR_ECO_POINTER;
+    *out = 0;
+    if (!me) return ERR_ECO_POINTER;
+    return create@STEM@(system, outer, iid, out);
+}
+
+static int16_t ECOCALLMETHOD factory_init(IEcoComponentFactory* me, IEcoUnknown* system, void* value) {
+    (void)value;
+    return me && system ? ERR_ECO_SUCCESS : ERR_ECO_POINTER;
+}
+
+static char_t* ECOCALLMETHOD factory_name(IEcoComponentFactory* me) {
+    return me ? "@STEM@" : 0;
+}
+
+static char_t* ECOCALLMETHOD factory_version(IEcoComponentFactory* me) {
+    return me ? "2.0.0" : 0;
+}
+
+static char_t* ECOCALLMETHOD factory_manufacturer(IEcoComponentFactory* me) {
+    return me ? "" : 0;
+}
+
+static IEcoComponentFactoryVTbl factory_vtable = {
+    factory_query, factory_addref, factory_release, factory_alloc, factory_init,
+    factory_name, factory_version, factory_manufacturer
+};
+static C@STEM@Factory factory = {&factory_vtable, 0};
+
+#ifdef ECO_DLL
+ECO_EXPORT IEcoComponentFactory* ECOCALLMETHOD GetIEcoComponentFactoryPtr(void) {
+    return (IEcoComponentFactory*)&factory;
+}
+#elif ECO_LIB
+IEcoComponentFactory* GetIEcoComponentFactoryPtr_@GUID@ = (IEcoComponentFactory*)&factory;
+#endif

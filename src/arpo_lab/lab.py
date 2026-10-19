@@ -1,11 +1,13 @@
 """Prepare a versioned ACOM experiment and produce one comparison report."""
 
 import json
+import os
 import re
 import sys
 import tempfile
 from pathlib import Path
 
+from .acom import write_contract_check
 from .agent import compact_history, run_session
 from .config import increase_run_budgets, load_config
 from .eco import generate_project, installed
@@ -29,6 +31,15 @@ def init_lab(directory, topic, name="Eco.Lab1", repo=Path("."), example=None):
     project = generate_project(directory / "seed", name, install)
     checks = directory / "checks"
     checks.mkdir()
+    stem = read_json(project / "arpo-scaffold.json")["receipt"]["normalized_name"]
+    acom_check = checks / "acom.c"
+    write_contract_check(project, stem, acom_check)
+    preflight = build(project, client=acom_check, run=True, sanitize=True,
+                      output="BuildFiles/AcomPreflight", sdk_sha256=install["sdk_sha256"])
+    save_json(directory / "acom-preflight.json", {
+        "status": "passed", "check_sha256": file_hash(acom_check),
+        "client_output": preflight["client_output"], "at": utc_now(),
+    })
     builder = Path(__file__).with_name("eco_build.py").resolve()
     command = [
         str(sys.executable),
@@ -60,7 +71,8 @@ def init_lab(directory, topic, name="Eco.Lab1", repo=Path("."), example=None):
             ]
         )
         short = "Implement absolute value for all functions declared in ArpoMethods.h. "
-        short += "Use ANSI C89 and no libc calls. Return one full source file including ArpoMethods.h."
+        short += "Use ANSI C89 and no libc calls. Follow the shared CODING_STYLE.md and fixed public ABI. "
+        short += "Return one full source file including ArpoMethods.h."
         detailed = short + "\nCopy the function declarations from ArpoMethods.h exactly. "
         detailed += "AbsInt and AbsLong return unsigned magnitudes, including minimum signed inputs. "
         detailed += "Convert to unsigned first, then subtract from unsigned zero for negative inputs; "
@@ -95,9 +107,17 @@ def init_lab(directory, topic, name="Eco.Lab1", repo=Path("."), example=None):
             encoding="utf-8",
         )
         validations.append([str(sys.executable), str(check)])
-        short = f"Выполни лабораторную ACOM на тему «{topic}» на C89 в имеющемся проекте."
+        short = f"Выполни лабораторную ACOM на тему «{topic}» на C89 в имеющемся проекте. "
+        short += "Соблюдай общий CODING_STYLE.md и фиксированный публичный контракт."
         detailed = short + "\n[Уточнить интерфейс, алгоритмы, типы, граничные случаи и критерии принятия.]"
-        protected = [".sdk", ".arpo-build.py", "arpo-scaffold.json", ".arpo-toolchain.json"]
+        protected = [".sdk", ".arpo-build.py", "arpo-scaffold.json", ".arpo-toolchain.json", "SharedFiles",
+                     f"SourceFiles/C{stem}Factory.c", f"HeaderFiles/C{stem}Factory.h"]
+    protected.append("CODING_STYLE.md")
+    validations.append([
+        str(sys.executable), str(builder), "--project", "{workspace}",
+        "--client", str(acom_check), "--run", "--sanitize", "--output", "BuildFiles/AcomContract",
+        "--sdk-sha256", install["sdk_sha256"],
+    ])
     (directory / "short.txt").write_text(short + "\n", encoding="utf-8")
     (directory / "detailed.txt").write_text(detailed + "\n", encoding="utf-8")
     model = repo / "models/qwen-coder"
@@ -107,7 +127,7 @@ def init_lab(directory, topic, name="Eco.Lab1", repo=Path("."), example=None):
     text = f"[model]\nname = {quoted(model)}\nmax_tokens = 8192\ntimeout_s = 600\n\n"
     text += '[agent]\nprotocol = "files"\nmax_requests = 30\nmax_total_tokens = 600000\n'
     text += "workspace_manifest = true\n"
-    text += 'context_files = ["SharedFiles/*.h", "HeaderFiles/*.h", "SourceFiles/*.c", '
+    text += 'context_files = ["CODING_STYLE.md", "SharedFiles/*.h", "HeaderFiles/*.h", "SourceFiles/*.c", '
     text += '"UnitTestFiles/SourceFiles/*.c", ".sdk/Eco.System1/SharedFiles/*.h", '
     text += '".sdk/Eco.InterfaceBus1/SharedFiles/*.h", ".sdk/Eco.MemoryManager1/SharedFiles/*.h"]\n'
     text += "max_wall_s = 3600\nmax_context_chars = 220000\n\n[tools]\n"
@@ -126,7 +146,7 @@ def init_lab(directory, topic, name="Eco.Lab1", repo=Path("."), example=None):
         text = text.replace("workspace_manifest = true", "workspace_manifest = false")
         text = re.sub(
             r"context_files = .*\n",
-            'context_files = ["HeaderFiles/ArpoMethods.h"]\n',
+            'context_files = ["CODING_STYLE.md", "HeaderFiles/ArpoMethods.h"]\n',
             text,
         )
         text = text.replace(
@@ -159,6 +179,8 @@ def init_lab(directory, topic, name="Eco.Lab1", repo=Path("."), example=None):
             "seed": str(project.relative_to(directory)),
             "sdk": install,
             "example": example,
+            "acom_contract_check": str(acom_check.relative_to(directory)),
+            "acom_scaffold_version": 2,
             "experiments": [],
         },
     )
@@ -183,6 +205,7 @@ def init_lab(directory, topic, name="Eco.Lab1", repo=Path("."), example=None):
         "Оба промпта получают одинаковый seed. PDF заданий модели не передаются.\n",
         encoding="utf-8",
     )
+    write_review_index(directory, [])
     print("Лабораторная подготовлена: " + str(directory))
     return directory
 
@@ -198,6 +221,10 @@ def run_lab(directory, repo=Path("."), config_path=None, model=None, repeats=Non
         config = load_config(overrides=config)
     if len(config["validation"]["commands"]) < 2:
         raise ValueError("Need both an Eco build check and independent task-specific checks")
+    if manifest.get("acom_contract_check"):
+        required = (directory / manifest["acom_contract_check"]).resolve()
+        if not any(str(required) in command for command in config["validation"]["commands"]):
+            raise ValueError("Keep the independent ACOM contract check in validation.commands")
     if not manifest.get("example"):
         check = directory / "checks/validate.py"
         if check.exists() and "ARPO_CHECKS_TODO" in check.read_text():
@@ -246,6 +273,73 @@ def make_lab_reports(directory, runs, target):
     write_report(
         runs, target, formats, directory / "notes-comparison.toml", csv_path if csv_path.is_file() else None
     )
+    if (directory / "lab.json").is_file():
+        write_review_index(directory, runs, target)
+
+
+def write_review_index(directory, runs, report_directory=None):
+    """Refresh only the generated navigation block, keeping hand-written README notes."""
+    from urllib.parse import quote
+
+    directory = Path(directory).resolve()
+    manifest = read_json(directory / "lab.json")
+    seed = directory / manifest["seed"]
+
+    def link(path, title=None):
+        relative = Path(os.path.relpath(path.resolve(), directory)).as_posix()
+        return f"[{title or path.name}]({quote(relative, safe='/')})"
+
+    lines = ["## Где проверять реализацию", "",
+             "Имена вариантов относятся к исходным промптам. Каждый вариант содержит полный код.",
+             "Статус passed означает прохождение настроенных проверок; отдельно нужен просмотр кода.", ""]
+    if runs:
+        lines += ["| Вариант | Повтор | Статус | Исходники |", "|---|---:|---|---|"]
+        for run in runs:
+            workspace = Path(run["source_path"]) / "workspace"
+            label = {"short": "вариант с кратким промптом",
+                     "detailed": "вариант с подробным промптом"}.get(run["label"], run["label"])
+            sources = sorted((workspace / "SourceFiles").glob("*.c"))
+            pointers = ", ".join(link(path) for path in sources) or "исходники отсутствуют"
+            lines.append(f"| {label} | {run.get('repeat', 1)} | {run['status']} | {pointers} |")
+            for folder, title in [("SharedFiles", "интерфейсы"),
+                                  ("HeaderFiles", "структуры объекта и фабрики"),
+                                  ("UnitTestFiles", "консольный клиент")]:
+                files = sorted(path for path in (workspace / folder).rglob("*")
+                               if path.is_file() and path.suffix in {".c", ".h"})
+                if files:
+                    pointers = ", ".join(link(path) for path in files)
+                    lines.append(f"| ↳ {title} | | | {pointers} |")
+        lines.append("")
+    else:
+        lines += ["Генерация ещё не выполнена; готовых решений пока нет.", ""]
+    lines += ["Общий незавершённый шаблон до эксперимента:", ""]
+    for folder in ["SharedFiles", "HeaderFiles", "SourceFiles", "UnitTestFiles"]:
+        for path in sorted((seed / folder).rglob("*")):
+            if path.is_file() and path.suffix in {".c", ".h"}:
+                lines.append("- " + link(path, path.relative_to(seed).as_posix()))
+    lines += ["", "Независимые проверки и исходные запросы:", ""]
+    for path in sorted((directory / "checks").glob("*")):
+        if path.is_file():
+            lines.append("- " + link(path))
+    for name in ["short.txt", "detailed.txt", "task.md", "acom-preflight.json"]:
+        if (directory / name).is_file():
+            lines.append("- " + link(directory / name))
+    if report_directory and (Path(report_directory) / "comparison.docx").is_file():
+        lines += ["", "Единый отчёт: " + link(Path(report_directory) / "comparison.docx")]
+    lines += ["", "Для сборки выбранного решения перейдите в его workspace и выполните:",
+              "", "```bash", "python3 .arpo-build.py --run", "```", "",
+              "Проверяйте алгоритм в исходниках соответствующего варианта; seed содержит только шаблон."]
+    start, end = "<!-- arpo:review:start -->", "<!-- arpo:review:end -->"
+    block = start + "\n" + "\n".join(lines) + "\n" + end
+    path = directory / "README.md"
+    existing = path.read_text(encoding="utf-8") if path.exists() else "# " + manifest["topic"] + "\n"
+    if start in existing and end in existing:
+        before, rest = existing.split(start, 1)
+        _, after = rest.split(end, 1)
+        text = before + block + after
+    else:
+        text = existing.rstrip() + "\n\n" + block + "\n"
+    path.write_text(text, encoding="utf-8")
 
 
 def resume_lab(
@@ -318,7 +412,7 @@ def wire_abs_methods(project, stem, guid):
     header.write_text(prototypes, encoding="utf-8")
     source = project / "SourceFiles" / f"C{stem}.c"
     text = source.read_text(encoding="utf-8-sig")
-    method = re.search(r"static int16_t ECOCALLMETHOD (\w+_MyFunction)\([^\n]+\) \{.*?^\}", text, re.M | re.S)
+    method = re.search(r"static int16_t ECOCALLMETHOD (\w+_MyFunction)\([^{}]*\) \{.*?^\}", text, re.M | re.S)
     if not method:
         raise ValueError("Cannot locate vendor MyFunction body for the ACOM method adapter")
     name = method[1]

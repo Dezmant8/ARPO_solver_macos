@@ -5,13 +5,13 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from arpo_lab.agent import new_run, validate
 from arpo_lab.config import load_config
 from arpo_lab.eco import extract_selected, installed, setup_eco
 from arpo_lab.lab import prepare_abs
-from arpo_lab.local_server import local_server
+from arpo_lab.local_server import check_model, local_server
 from arpo_lab.protocol import files_reply, native_reply, qwen_xml_reply
 from arpo_lab.storage import read_json
 from arpo_lab.workspace import Workspace, execute, sandbox_available
@@ -109,6 +109,50 @@ class EcoTests(unittest.TestCase):
         ):
             with local_server(config, self.root, progress=lambda _: None):
                 pass
+        launch.assert_not_called()
+
+    def test_model_check_accepts_only_the_same_resolved_model_directory(self):
+        weights = self.root / "external-weights"
+        weights.mkdir()
+        alias = self.root / "model"
+        alias.symlink_to(weights, target_is_directory=True)
+        config = load_config(overrides={"model": {"name": str(alias)}})
+        with patch("arpo_lab.local_server.Client") as client:
+            client.return_value.models.return_value = {"data": [{"id": str(weights.resolve())}]}
+            check_model(config)
+            client.return_value.models.return_value = {"data": [{"id": str(self.root / 'other-model')}]}
+            with self.assertRaisesRegex(ValueError, "does not advertise"):
+                check_model(config)
+
+    def test_server_preserves_configured_model_id_when_weights_are_symlinked(self):
+        weights = self.root / "external-weights"
+        weights.mkdir()
+        (weights / "arpo-model.json").write_text("{}")
+        alias = self.root / "model"
+        alias.symlink_to(weights, target_is_directory=True)
+        config = load_config(overrides={"model": {"name": str(alias)}})
+        process = Mock(pid=12345)
+        process.poll.return_value = None
+        with (
+            patch("arpo_lab.local_server.check_model", side_effect=[OSError(), None]),
+            patch("arpo_lab.local_server.subprocess.Popen", return_value=process) as launch,
+            patch("arpo_lab.local_server.os.killpg"),
+        ):
+            with local_server(config, self.root, progress=lambda _: None):
+                command = launch.call_args.args[0]
+                self.assertEqual(command[command.index("--model") + 1], str(alias))
+
+    def test_unavailable_model_symlink_requests_storage_without_launching_server(self):
+        alias = self.root / "model"
+        alias.symlink_to(self.root / "disconnected-ssd", target_is_directory=True)
+        config = load_config(overrides={"model": {"name": str(alias)}})
+        with (
+            patch("arpo_lab.local_server.check_model", side_effect=OSError()),
+            patch("arpo_lab.local_server.subprocess.Popen") as launch,
+        ):
+            with self.assertRaisesRegex(ValueError, "connect the external SSD"):
+                with local_server(config, self.root, progress=lambda _: None):
+                    self.fail("Unavailable storage must not start MLX")
         launch.assert_not_called()
 
     def test_empty_native_arguments_are_not_silently_treated_as_root_listing(self):
